@@ -1,0 +1,59 @@
+# OmniVoice — production GHCR image, single-stack server.
+# Runs k2-fsa/OmniVoice on host port 8007 (chosen so it can coexist with the
+# qwen3-tts forks on 8005).
+#
+# Usage on the GPU host:
+#   cp .env.example .env
+#   docker compose --env-file .env -f docker-compose.gpu.prod.yml pull
+#   docker compose --env-file .env -f docker-compose.gpu.prod.yml up -d
+#   docker logs -f omnivoice-tts-server
+#
+# Endpoints:
+#   POST /v1/audio/speech   — clone + ICL transcript (inline event tokens
+#                              like [laughter], [sigh] forwarded verbatim)
+#   POST /v1/audio/design   — voice design via comma-separated attributes
+#   POST /v1/audio/auto     — auto voice, no ref, no instruct
+#   POST /v1/voices/clone   — multipart upload (auto-trimmed to 15 s)
+#   GET  /v1/audio/voices   — list builtin + cloned references
+#   GET  /health            — 200 once model warm
+
+services:
+  omnivoice-tts-server:
+    container_name: omnivoice-tts-server
+    image: ghcr.io/autoeditor-video-or-audio/omnivoice-tts:${OMNIVOICE_IMAGE_TAG:-latest-gpu-flash}
+    ports:
+      - "${OMNIVOICE_PORT:-8007}:8005"
+    environment:
+      - OMNIVOICE_MODEL=${OMNIVOICE_MODEL:-k2-fsa/OmniVoice}
+      - OMNIVOICE_DTYPE=${OMNIVOICE_DTYPE:-float16}
+      - OMNIVOICE_DEVICE=${OMNIVOICE_DEVICE:-cuda:0}
+      - OMNIVOICE_NUM_STEP=${OMNIVOICE_NUM_STEP:-32}
+      - OMNIVOICE_CLONE_MIN_SECONDS=${OMNIVOICE_CLONE_MIN_SECONDS:-3}
+      - OMNIVOICE_CLONE_STORE_MAX_SECONDS=${OMNIVOICE_CLONE_STORE_MAX_SECONDS:-15}
+      - OMNIVOICE_LOG_LEVEL=${OMNIVOICE_LOG_LEVEL:-INFO}
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./data/voices:/app/data/voices
+      - ./voices:/app/voices
+      - ./reference_audio:/app/reference_audio
+      - cache-omnivoice-hf:/root/.cache/huggingface
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8005/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 240s
+      retries: 3
+
+volumes:
+  cache-omnivoice-hf:

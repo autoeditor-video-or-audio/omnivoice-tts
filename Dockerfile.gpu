@@ -1,0 +1,92 @@
+# GPU image for the OmniVoice OpenAI-compatible server (fork).
+#
+# Mirrors the pipeline shape used by the sibling qwen3-tts fork:
+# nvidia/cuda base + deadsnakes Python 3.12 + libcudnn8 + ffmpeg.
+# Installs the upstream omnivoice PyPI package + our server_addons.
+#
+# Build:  docker build -f Dockerfile.gpu -t omnivoice-tts:gpu .
+# Run:    docker run --gpus all -p 8007:8005 omnivoice-tts:gpu
+# Compose: docker-compose.gpu.prod.yml
+
+ARG CUDA_BASE_TAG=12.8.1-base-ubuntu22.04
+FROM nvidia/cuda:${CUDA_BASE_TAG}
+
+LABEL org.opencontainers.image.source="https://github.com/autoeditor-video-or-audio/omnivoice-tts"
+
+ARG INSTALL_FLASH_ATTN=0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get -qq update \
+    && apt-get -qq install --no-install-recommends \
+        software-properties-common \
+        ca-certificates \
+        curl \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get -qq update \
+    && apt-get -qq install --no-install-recommends \
+        python3.12 \
+        python3.12-venv \
+        python3.12-dev \
+        build-essential \
+        ffmpeg \
+        git \
+        libcudnn8 \
+        libsndfile1 \
+        sox \
+        wget \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# OmniVoice's upstream README pins torch==2.8.0 + cu128. Install that first
+# from the matching PyTorch wheel index.
+RUN pip install --upgrade pip \
+    && pip install --extra-index-url https://download.pytorch.org/whl/cu128 \
+        "torch==2.8.0" "torchaudio==2.8.0"
+
+# Server-side runtime: upstream omnivoice + FastAPI stack + hf_transfer
+# for the initial model download.
+RUN pip install \
+        "omnivoice==0.1.5" \
+        "fastapi>=0.110" "uvicorn[standard]>=0.29" "python-multipart>=0.0.9" \
+        "soundfile" "numpy>=1.24" "pydantic>=2.7" \
+        "hf_transfer>=0.1.6"
+
+COPY . .
+
+# Optional flash-attn install — gated to keep build cacheable.
+# Try prebuilt wheel first (fast, no nvcc); fall back to source build
+# (requires CUDA_BASE_TAG=*-devel-* with nvcc available).
+ARG FLASH_ATTN_VERSION=2.8.3
+ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+RUN if [ "$INSTALL_FLASH_ATTN" = "1" ]; then \
+        pip install --no-cache-dir "${FLASH_ATTN_WHEEL}" \
+            || pip install --no-cache-dir "flash-attn==${FLASH_ATTN_VERSION}" --no-build-isolation; \
+    fi
+
+ENV OMNIVOICE_DATA_DIR=/app/data/voices \
+    OMNIVOICE_VOICES_DIR=/app/voices \
+    OMNIVOICE_REFERENCE_DIR=/app/reference_audio \
+    OMNIVOICE_MODEL=k2-fsa/OmniVoice \
+    OMNIVOICE_DTYPE=float16 \
+    OMNIVOICE_DEVICE=cuda:0 \
+    OMNIVOICE_NUM_STEP=32 \
+    HF_HOME=/root/.cache/huggingface \
+    PYTHONPATH=/app
+
+RUN mkdir -p ${OMNIVOICE_DATA_DIR}/clips ${OMNIVOICE_VOICES_DIR} ${OMNIVOICE_REFERENCE_DIR}
+
+EXPOSE 8005
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=240s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8005/health || exit 1
+
+CMD ["python3", "-m", "uvicorn", "server_addons.server_app:app", "--host", "0.0.0.0", "--port", "8005", "--workers", "1"]

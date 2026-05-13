@@ -1,0 +1,46 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/autoeditor-video-or-audio/omnivoice-tts
+  tag: latest-gpu-flash
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+env:
+  OMNIVOICE_MODEL: "k2-fsa/OmniVoice"
+  OMNIVOICE_DTYPE: "float16"
+  OMNIVOICE_DEVICE: "cuda:0"
+  OMNIVOICE_NUM_STEP: "32"
+  OMNIVOICE_CLONE_MIN_SECONDS: "3"
+  OMNIVOICE_CLONE_STORE_MAX_SECONDS: "15"
+  OMNIVOICE_LOG_LEVEL: "INFO"
+  HF_HUB_ENABLE_HF_TRANSFER: "1"
+
+persistence:
+  references:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 1Gi
+  hf:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 8Gi
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 12Gi
+    nvidia.com/gpu: 1
+  requests:
+    cpu: "1"
+    memory: 4Gi
+    nvidia.com/gpu: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
