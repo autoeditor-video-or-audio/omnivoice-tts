@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.0.0...v1.0.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **inference:** sanitize inline markup so cloned voice does not drift ([5302261](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/53022616a2447dadfcc673f451f2f29b097e3c8a))
+
 # 1.0.0 (2026-05-13)
 
 
