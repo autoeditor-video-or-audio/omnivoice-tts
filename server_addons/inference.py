@@ -208,19 +208,46 @@ def _wav_bytes(wav: np.ndarray, sr: int) -> bytes:
     return buf.getvalue()
 
 
+# Knob names accepted by upstream OmniVoiceGenerationConfig and forwarded
+# verbatim when the caller sets a value. Source of truth:
+# omnivoice/models/omnivoice.py:OmniVoiceGenerationConfig +
+# docs/generation-parameters.md.
+_FORWARDED_KNOBS = (
+    "num_step",
+    "denoise",
+    "guidance_scale",
+    "t_shift",
+    "position_temperature",
+    "class_temperature",
+    "layer_penalty_factor",
+    "preprocess_prompt",
+    "postprocess_output",
+    "audio_chunk_duration",
+    "audio_chunk_threshold",
+)
+
+
 def _generate_kwargs(
     *,
-    num_step: Optional[int],
-    speed: Optional[float],
-    duration: Optional[float],
+    speed: Optional[float] = None,
+    duration: Optional[float] = None,
+    **knobs,
 ) -> dict:
+    """Build the kwargs dict for `_model.generate(...)`.
+
+    Only forwards knobs the caller set (None -> let upstream default).
+    `duration` takes priority over `speed` per upstream contract.
+    """
     kwargs: dict = {}
-    if num_step is not None:
-        kwargs["num_step"] = int(num_step)
-    else:
+    for name in _FORWARDED_KNOBS:
+        value = knobs.get(name)
+        if value is not None:
+            kwargs[name] = value
+    # Default num_step to the env override when the caller did not set it,
+    # so the operator can dial inference speed without rebuilding clients.
+    if "num_step" not in kwargs:
         kwargs["num_step"] = OMNIVOICE_NUM_STEP_DEFAULT
     if duration is not None:
-        # When duration is set OmniVoice ignores speed per upstream README.
         kwargs["duration"] = float(duration)
     elif speed is not None:
         kwargs["speed"] = float(speed)
@@ -232,14 +259,14 @@ def synthesize_wav(
     *,
     ref_audio_path: Path,
     ref_text: Optional[str] = None,
-    num_step: Optional[int] = None,
     speed: Optional[float] = None,
     duration: Optional[float] = None,
+    **knobs,
 ) -> bytes:
     """Voice-cloning synthesis. ref_text optional (Whisper auto-transcribes)."""
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
-    kwargs = _generate_kwargs(num_step=num_step, speed=speed, duration=duration)
+    kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
     if ref_text and ref_text.strip():
         kwargs["ref_text"] = sanitize_text(ref_text)
     wavs = _model.generate(
@@ -254,14 +281,14 @@ def synthesize_design_wav(
     text: str,
     *,
     instruct: str,
-    num_step: Optional[int] = None,
     speed: Optional[float] = None,
     duration: Optional[float] = None,
+    **knobs,
 ) -> bytes:
     """Voice-design synthesis. No reference audio."""
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
-    kwargs = _generate_kwargs(num_step=num_step, speed=speed, duration=duration)
+    kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
     wavs = _model.generate(text=sanitize_text(text), instruct=instruct, **kwargs)
     return _wav_bytes(wavs[0], _sample_rate)
 
@@ -269,13 +296,13 @@ def synthesize_design_wav(
 def synthesize_auto_wav(
     text: str,
     *,
-    num_step: Optional[int] = None,
     speed: Optional[float] = None,
     duration: Optional[float] = None,
+    **knobs,
 ) -> bytes:
     """Auto-voice synthesis. OmniVoice picks a voice."""
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
-    kwargs = _generate_kwargs(num_step=num_step, speed=speed, duration=duration)
+    kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
     wavs = _model.generate(text=sanitize_text(text), **kwargs)
     return _wav_bytes(wavs[0], _sample_rate)

@@ -41,6 +41,34 @@ _synth_lock = asyncio.Lock()
 
 _VOICE_DESIGN_TRAINED = {"english", "chinese", "en", "zh"}
 
+# Knob fields surfaced by SpeechRequest/DesignRequest/AutoRequest via the
+# shared GenerationParams base. Forwarded to inference.synthesize_*; any
+# value left as None is dropped so upstream defaults stay authoritative.
+_GENERATION_KNOB_FIELDS = (
+    "num_step",
+    "denoise",
+    "guidance_scale",
+    "t_shift",
+    "position_temperature",
+    "class_temperature",
+    "layer_penalty_factor",
+    "preprocess_prompt",
+    "postprocess_output",
+    "audio_chunk_duration",
+    "audio_chunk_threshold",
+    "speed",
+    "duration",
+)
+
+
+def _gen_knobs(req) -> dict:
+    """Pull every set generation knob off the request as a dict."""
+    return {
+        name: getattr(req, name)
+        for name in _GENERATION_KNOB_FIELDS
+        if getattr(req, name, None) is not None
+    }
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -112,9 +140,7 @@ async def synthesize(req: SpeechRequest, request: Request) -> Response:
                     req.input,
                     ref_audio_path=ref_path,
                     ref_text=effective_ref_text,
-                    num_step=req.num_step,
-                    speed=req.speed,
-                    duration=req.duration,
+                    **_gen_knobs(req),
                 ),
             )
         except Exception:
@@ -151,9 +177,7 @@ async def synthesize_design(req: DesignRequest) -> Response:
                 lambda: inference.synthesize_design_wav(
                     req.input,
                     instruct=req.instruct,
-                    num_step=req.num_step,
-                    speed=req.speed,
-                    duration=req.duration,
+                    **_gen_knobs(req),
                 ),
             )
         except Exception:
@@ -179,9 +203,7 @@ async def synthesize_auto(req: AutoRequest) -> Response:
                 None,
                 lambda: inference.synthesize_auto_wav(
                     req.input,
-                    num_step=req.num_step,
-                    speed=req.speed,
-                    duration=req.duration,
+                    **_gen_knobs(req),
                 ),
             )
         except Exception:
