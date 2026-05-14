@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,125 @@ import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
+
+# OmniVoice has a closed set of inline non-verbal tags that the tokenizer
+# recognises (see omnivoice/models/omnivoice.py:_NONVERBAL_PATTERN):
+_UPSTREAM_TAGS: frozenset[str] = frozenset(
+    {
+        "laughter",
+        "sigh",
+        "confirmation-en",
+        "question-en",
+        "question-ah",
+        "question-oh",
+        "question-ei",
+        "question-yi",
+        "surprise-ah",
+        "surprise-oh",
+        "surprise-wa",
+        "surprise-yo",
+        "dissatisfaction-hnn",
+    }
+)
+
+# Common synonyms / variants we rewrite to a known upstream tag so the
+# operator can write naturally without memorising the closed set.
+_SYNONYM_TO_UPSTREAM: dict[str, str] = {
+    "laugh": "laughter",
+    "laughs": "laughter",
+    "laughing": "laughter",
+    "chuckle": "laughter",
+    "chuckles": "laughter",
+    "sighs": "sigh",
+    "annoyed sigh": "sigh",
+    "deep sigh": "sigh",
+    "long sigh": "sigh",
+    "soft sigh": "sigh",
+    "frustrated sigh": "sigh",
+}
+
+# Tags with no upstream equivalent: rewrite to plain prosodic punctuation.
+_PAUSE_SYNONYMS: frozenset[str] = frozenset(
+    {"pause", "break", "silence", "silent", "long pause", "short pause"}
+)
+_SOFT_BREAK_SYNONYMS: frozenset[str] = frozenset(
+    {"breath", "inhale", "exhale", "deep breath", "gasp"}
+)
+
+# Any [bracketed token] up to 40 chars; we classify per-tag inside the callback.
+_ANY_BRACKET_TAG = re.compile(
+    r"(?P<lead>[\s.,;:!?…]*)\[(?P<body>[^\]]{1,40})\](?P<trail>[\s.,;:!?…]*)"
+)
+_PAUSE_DURATION_TAG = re.compile(r"^pause[:\s]", re.IGNORECASE)
+_MULTI_SPACE = re.compile(r"[ \t]{2,}")
+
+
+def _prosodic_replace(separator: str, lead: str, trail: str) -> str:
+    """Swap a tag for `separator` while keeping at most one strong punctuation."""
+    keep = ""
+    for ch in (lead + trail):
+        if ch in ".!?":
+            keep = ch
+            break
+    if separator == "…":
+        return f"{keep} … " if keep else "… "
+    return f"{keep} , " if keep else ", "
+
+
+def _classify_and_rewrite(match: "re.Match[str]") -> str:
+    body = (match.group("body") or "").strip()
+    body_lc = body.lower()
+    lead = match.group("lead") or ""
+    trail = match.group("trail") or ""
+
+    # 1) Already a recognised upstream tag — keep verbatim, lowercase
+    #    (upstream regex is case-sensitive and lowercase).
+    if body_lc in _UPSTREAM_TAGS:
+        return f"{lead}[{body_lc}]{trail}"
+
+    # 2) Known synonym for an upstream tag — rewrite, preserve context.
+    if body_lc in _SYNONYM_TO_UPSTREAM:
+        canonical = _SYNONYM_TO_UPSTREAM[body_lc]
+        return f"{lead}[{canonical}]{trail}"
+
+    # 3) Pause family (no upstream equivalent) — long prosodic pause.
+    if body_lc in _PAUSE_SYNONYMS or _PAUSE_DURATION_TAG.match(body_lc):
+        return _prosodic_replace("…", lead, trail)
+
+    # 4) Soft-break family (breath/inhale/etc) — short prosodic pause.
+    if body_lc in _SOFT_BREAK_SYNONYMS:
+        return _prosodic_replace(", ", lead, trail)
+
+    # 5) Anything else: drop the tag, collapse surrounding whitespace.
+    logger.debug("sanitize_text dropped unknown bracket tag: [%s]", body)
+    return f"{lead.rstrip()} {trail.lstrip()}"
+
+
+def sanitize_text(text: str) -> str:
+    """Rewrite inline markup so OmniVoice's tokenizer stays in distribution.
+
+    - Recognised tags (`[laughter]`, `[sigh]`, `[question-*]`, etc.) are
+      preserved verbatim and lower-cased so upstream's case-sensitive
+      regex matches them.
+    - Common synonyms (`[laughs]`, `[annoyed sigh]`, `[chuckle]`) are
+      rewritten to the canonical upstream tag.
+    - `[pause]` / `[break]` / `[silence]` / `[pause:Ns]` map to an
+      ellipsis (long prosodic pause); breath/inhale/etc. map to comma.
+    - Anything else inside `[...]` is dropped (logged at DEBUG).
+
+    Without this rewrite the tokenizer treats unknown brackets as
+    literal characters, the model tries to vocalise them, and the
+    reference-audio conditioning drifts so subsequent words come out
+    in a random voice instead of the cloned one.
+    """
+    if not text or "[" not in text:
+        return text
+    original = text
+    text = _ANY_BRACKET_TAG.sub(_classify_and_rewrite, text)
+    text = _MULTI_SPACE.sub(" ", text).strip()
+    if text != original:
+        logger.debug("sanitize_text rewrote markup: %r -> %r", original, text)
+    return text
 
 # Selectable knobs via env (documented in README-fork.md).
 OMNIVOICE_MODEL = os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
@@ -121,9 +241,9 @@ def synthesize_wav(
         raise RuntimeError("OmniVoice model not initialised")
     kwargs = _generate_kwargs(num_step=num_step, speed=speed, duration=duration)
     if ref_text and ref_text.strip():
-        kwargs["ref_text"] = ref_text
+        kwargs["ref_text"] = sanitize_text(ref_text)
     wavs = _model.generate(
-        text=text,
+        text=sanitize_text(text),
         ref_audio=str(ref_audio_path),
         **kwargs,
     )
@@ -142,7 +262,7 @@ def synthesize_design_wav(
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
     kwargs = _generate_kwargs(num_step=num_step, speed=speed, duration=duration)
-    wavs = _model.generate(text=text, instruct=instruct, **kwargs)
+    wavs = _model.generate(text=sanitize_text(text), instruct=instruct, **kwargs)
     return _wav_bytes(wavs[0], _sample_rate)
 
 
@@ -157,5 +277,5 @@ def synthesize_auto_wav(
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
     kwargs = _generate_kwargs(num_step=num_step, speed=speed, duration=duration)
-    wavs = _model.generate(text=text, **kwargs)
+    wavs = _model.generate(text=sanitize_text(text), **kwargs)
     return _wav_bytes(wavs[0], _sample_rate)
