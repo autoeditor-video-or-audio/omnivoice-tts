@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.0.1...v1.1.0) (2026-05-14)
+
+
+### Features
+
+* **server:** expose full OmniVoice generation params via shared GenerationParams base ([8251c45](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/8251c45164376146684c809863093253f4aefe40))
+
 ## [1.0.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.0.0...v1.0.1) (2026-05-14)
 
 
