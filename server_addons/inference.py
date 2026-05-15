@@ -172,16 +172,20 @@ OMNIVOICE_DEVICE = os.environ.get("OMNIVOICE_DEVICE", "cuda:0")
 OMNIVOICE_NUM_STEP_DEFAULT = int(os.environ.get("OMNIVOICE_NUM_STEP", "32"))
 # Chunking knobs. Upstream defaults (audio_chunk_threshold=30.0,
 # audio_chunk_duration=15.0) trigger _generate_chunked on lines that
-# estimate just above 30s of audio — the per-chunk ref_audio re-
-# conditioning then drifts the cloned voice across chunk boundaries.
-# We default the threshold to 120s here so single-line scripts (the
-# nifty-star sequencer's case) stay on the iterative path; operators
-# can flip it back per-request via the GenerationParams body.
+# Chunking knobs. Empirical PT-BR finding: upstream's single-shot
+# `_generate_iterative` path holds the cloned voice on the first word
+# or two but then drifts mid-sentence (PT-BR sits in the tail of
+# upstream's EN+ZH training distribution). `_generate_chunked` re-
+# conditions the reference audio at every chunk boundary, anchoring
+# the clone for the whole utterance. Default to a low threshold
+# (5.0s) + short chunks (3.0s) so PT-BR clones stay stable; operators
+# running EN/ZH can raise the threshold per-request via the
+# GenerationParams body (or via OMNIVOICE_AUDIO_CHUNK_THRESHOLD).
 OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT = float(
-    os.environ.get("OMNIVOICE_AUDIO_CHUNK_THRESHOLD", "120.0")
+    os.environ.get("OMNIVOICE_AUDIO_CHUNK_THRESHOLD", "5.0")
 )
 OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT = float(
-    os.environ.get("OMNIVOICE_AUDIO_CHUNK_DURATION", "15.0")
+    os.environ.get("OMNIVOICE_AUDIO_CHUNK_DURATION", "3.0")
 )
 
 # Sampling defaults. Upstream's `position_temperature=5.0` injects

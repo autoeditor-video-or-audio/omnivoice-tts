@@ -36,8 +36,14 @@ def test_default_request_seed_is_zero(inference):
     assert inference.OMNIVOICE_REQUEST_SEED == 0
 
 
-def test_default_audio_chunk_threshold_is_120(inference):
-    assert inference.OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT == 120.0
+def test_default_audio_chunk_threshold_is_5(inference):
+    # Empirical: 5s threshold + 3s chunks keep PT-BR cloned voices
+    # stable. Higher thresholds let _generate_iterative drift mid-line.
+    assert inference.OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT == 5.0
+
+
+def test_default_audio_chunk_duration_is_3(inference):
+    assert inference.OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT == 3.0
 
 
 def test_generate_kwargs_injects_greedy_sampling(inference):
@@ -48,8 +54,8 @@ def test_generate_kwargs_injects_greedy_sampling(inference):
 
 def test_generate_kwargs_injects_chunking_threshold(inference):
     kwargs = inference._generate_kwargs()
-    assert kwargs["audio_chunk_threshold"] == 120.0
-    assert kwargs["audio_chunk_duration"] == 15.0
+    assert kwargs["audio_chunk_threshold"] == 5.0
+    assert kwargs["audio_chunk_duration"] == 3.0
 
 
 def test_generate_kwargs_caller_overrides_win(inference):

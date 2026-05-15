@@ -5,35 +5,50 @@ deployed as a GPU Docker image for the nifty-star sequencer.
 
 ## Fork-specific stability fixes for PT-BR cloned voices
 
-Three of the deltas this fork layers on top of upstream are aimed at
-the production case "I clone a voice in PT-BR, paste a 4-line script,
-and the cloned voice drifts on lines 3 and 4":
+Five layers stack on top of upstream to keep a PT-BR cloned voice
+stable across a multi-line sequencer playlist. Empirical finding from
+isolated REPL tests on `Adam-Padra.wav`: upstream's single-shot
+`_generate_iterative` path holds the cloned voice for the first word
+or two and then drifts mid-sentence on PT-BR (out-of-distribution
+for upstream's EN+ZH training corpus). The fixes below stack so the
+final synth path matches what stays on-voice end-to-end.
 
-1. **Greedy sampling by default.** Upstream's
+1. **Low chunking threshold (5s) + short chunks (3s).** This is the
+   load-bearing fix. `_generate_chunked` re-conditions the reference
+   audio tokens at every chunk boundary, anchoring the clone for the
+   full utterance. Without chunking, PT-BR clones drift even with
+   deterministic sampling. Override via
+   `OMNIVOICE_AUDIO_CHUNK_THRESHOLD` / `OMNIVOICE_AUDIO_CHUNK_DURATION`
+   or per-request `GenerationParams`.
+2. **Pre-built `VoiceClonePrompt` cache.** Matches upstream's gradio
+   demo (`omnivoice/cli/demo.py:209`): build the prompt once via
+   `model.create_voice_clone_prompt(...)` and reuse for every synth.
+   Eliminates per-request audio-tokeniser encode + Whisper transcribe
+   noise.
+3. **Greedy sampling by default.** Upstream's
    `position_temperature=5.0` injects Gumbel noise inside the
    diffusion loop, and PyTorch's global RNG advances across requests
-   — on PT-BR (out-of-distribution for upstream's EN+ZH training)
-   that drift compounds. The fork defaults
+   — on PT-BR that drift compounds. The fork defaults
    `OMNIVOICE_POSITION_TEMPERATURE=0.0` and pins
    `OMNIVOICE_CLASS_TEMPERATURE=0.0` (greedy = deterministic).
-   Override via the env vars or per-request `GenerationParams` body
-   if you want stylistic variance back.
-2. **Per-request RNG reseed.** `OMNIVOICE_REQUEST_SEED=0` (default)
+4. **Per-request RNG reseed.** `OMNIVOICE_REQUEST_SEED=0` (default)
    resets PyTorch's CPU + CUDA RNG at the top of every
-   `synthesize_*` call. Belt-and-braces guarantee against drift even
-   if temperature gets flipped back.
-3. **Clone-time auto-transcription.** When a clone is uploaded
-   without a `ref_text`, the fork transcribes it ONCE with Whisper
-   and persists the result in `index.json`. Every subsequent synth
-   request reuses that transcript via the existing
-   `VoiceIndex.resolve(...)` path, so OmniVoice's ICL conditioning
-   is bit-identical across all 4 lines of a list. The lifespan hook
-   pre-loads Whisper alongside the main model to keep clone creation
-   snappy.
+   `synthesize_*` call. Belt-and-braces against drift if temperature
+   gets flipped back.
+5. **Clone-time auto-transcription + lazy backfill.** When a clone is
+   uploaded without a `ref_text`, the fork transcribes it ONCE with
+   Whisper and persists the result in `index.json`. Legacy clones
+   created before this fix get their transcript backfilled on first
+   resolve. Whisper is pre-loaded from the lifespan hook so clone
+   creation never pays the ASR load tax.
 
-If you need stochastic generation back (e.g. running EN/ZH where the
-drift isn't a problem), set `OMNIVOICE_POSITION_TEMPERATURE=5.0` and
-`OMNIVOICE_REQUEST_SEED=-1` in your `.env`.
+If you're running EN or ZH (upstream's trained languages) and want
+to skip the chunking overhead, set
+`OMNIVOICE_AUDIO_CHUNK_THRESHOLD=30.0`
+`OMNIVOICE_AUDIO_CHUNK_DURATION=15.0` (upstream defaults) in your
+`.env`. For stochastic generation, also raise
+`OMNIVOICE_POSITION_TEMPERATURE=5.0` and set
+`OMNIVOICE_REQUEST_SEED=-1`.
 
 ## Upstream feature surface
 
