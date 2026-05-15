@@ -2,5 +2,5 @@ apiVersion: v2
 name: omnivoice-tts
 description: OpenAI-compatible OmniVoice GPU server with voice cloning, voice design, and inline event tokens (fork by autoeditor-video-or-audio).
 type: application
-version: 1.3.0
-appVersion: "1.3.0"
+version: 1.3.1
+appVersion: "1.3.1"
