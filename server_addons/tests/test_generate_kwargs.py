@@ -58,6 +58,12 @@ def test_generate_kwargs_injects_chunking_threshold(inference):
     assert kwargs["audio_chunk_duration"] == 3.0
 
 
+def test_generate_kwargs_disables_postprocess_output(inference):
+    # Upstream remove_silence trims the first word's soft onset.
+    kwargs = inference._generate_kwargs()
+    assert kwargs["postprocess_output"] is False
+
+
 def test_generate_kwargs_caller_overrides_win(inference):
     kwargs = inference._generate_kwargs(
         position_temperature=2.5,

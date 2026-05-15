@@ -20,6 +20,12 @@ final synth path matches what stays on-voice end-to-end.
    deterministic sampling. Override via
    `OMNIVOICE_AUDIO_CHUNK_THRESHOLD` / `OMNIVOICE_AUDIO_CHUNK_DURATION`
    or per-request `GenerationParams`.
+
+1.5. **`postprocess_output=False` default.** Upstream's
+   `remove_silence` runs with `lead_sil=100ms` and on chunked PT-BR
+   it sometimes eats the first word's soft attack. Disabled by
+   default; flip on via `OMNIVOICE_POSTPROCESS_OUTPUT=true` if you
+   want the silence trim back.
 2. **Pre-built `VoiceClonePrompt` cache.** Matches upstream's gradio
    demo (`omnivoice/cli/demo.py:209`): build the prompt once via
    `model.create_voice_clone_prompt(...)` and reuse for every synth.

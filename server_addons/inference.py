@@ -188,6 +188,17 @@ OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT = float(
     os.environ.get("OMNIVOICE_AUDIO_CHUNK_DURATION", "3.0")
 )
 
+# `postprocess_output=True` (upstream default) runs `remove_silence`
+# with lead_sil=100ms / mid_sil=500ms / trail_sil=100ms. On chunked
+# PT-BR output the leading silence trim sometimes eats the first
+# word's onset (the diffusion path produces a soft attack that
+# remove_silence classifies as silence). Default to False here;
+# operators can re-enable per-request via the GenerationParams body
+# if a particular voice's chunks need silence cleanup.
+OMNIVOICE_POSTPROCESS_OUTPUT_DEFAULT = os.environ.get(
+    "OMNIVOICE_POSTPROCESS_OUTPUT", "false"
+).lower() in ("1", "true", "yes")
+
 # Sampling defaults. Upstream's `position_temperature=5.0` injects
 # Gumbel noise inside `_generate_iterative` every step; on PT-BR
 # (out-of-distribution for upstream's EN+ZH training) it amplifies
@@ -387,6 +398,11 @@ def _generate_kwargs(
         kwargs["position_temperature"] = OMNIVOICE_POSITION_TEMPERATURE_DEFAULT
     if "class_temperature" not in kwargs:
         kwargs["class_temperature"] = OMNIVOICE_CLASS_TEMPERATURE_DEFAULT
+    # Default postprocess_output to False so the leading-silence trim
+    # in upstream's remove_silence() does not eat the first word's
+    # soft attack on chunked PT-BR output.
+    if "postprocess_output" not in kwargs:
+        kwargs["postprocess_output"] = OMNIVOICE_POSTPROCESS_OUTPUT_DEFAULT
     if duration is not None:
         kwargs["duration"] = float(duration)
     elif speed is not None:
