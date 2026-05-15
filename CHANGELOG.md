@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.2.2...v1.3.0) (2026-05-15)
+
+
+### Features
+
+* **ci:** forced rebuild to republish gpu-flash with sanitize ellipsis fix ([5490e3e](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/5490e3eaaaef9db409a0932820798c5c06d8ffa7))
+
 ## [1.2.2](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.2.1...v1.2.2) (2026-05-15)
 
 
