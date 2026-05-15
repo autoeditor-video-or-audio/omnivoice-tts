@@ -407,6 +407,50 @@ def _seed_rng() -> None:
         torch.cuda.manual_seed_all(OMNIVOICE_REQUEST_SEED)
 
 
+# Per-process cache of pre-built VoiceClonePrompt objects, keyed by
+# (ref_audio_path, ref_text_or_None). Upstream's `model.generate(
+# ref_audio=path, ref_text=...)` recomputes the audio-tokeniser encode
+# and re-runs Whisper auto-transcription on every call when the path
+# is a string — those re-runs are the dominant drift source on PT-BR
+# clones across consecutive requests. Building a VoiceClonePrompt once
+# and forwarding it via `voice_clone_prompt=` keeps the conditioning
+# bit-identical for every line of the same clone.
+_clone_prompt_cache: dict = {}
+
+
+def _get_or_build_clone_prompt(ref_audio_path: Path, ref_text: Optional[str]):
+    """Return a (cached) VoiceClonePrompt for this ref_audio_path.
+
+    Cache key includes ref_text so a clone that's later backfilled
+    (None -> "Hello world") doesn't keep returning the auto-transcribed
+    prompt forever.
+    """
+    if _model is None:
+        return None
+    key = (str(ref_audio_path), ref_text or None)
+    cached = _clone_prompt_cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        prompt = _model.create_voice_clone_prompt(
+            ref_audio=str(ref_audio_path),
+            ref_text=ref_text,
+        )
+    except Exception:
+        logger.exception(
+            "create_voice_clone_prompt failed for %s; falling back to per-request build",
+            ref_audio_path,
+        )
+        return None
+    _clone_prompt_cache[key] = prompt
+    logger.info(
+        "cached voice_clone_prompt for %s (ref_text=%r)",
+        ref_audio_path.name,
+        (ref_text or "")[:50],
+    )
+    return prompt
+
+
 def synthesize_wav(
     text: str,
     *,
@@ -420,15 +464,45 @@ def synthesize_wav(
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
     kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
-    if ref_text and ref_text.strip():
-        kwargs["ref_text"] = sanitize_text(ref_text)
+    sanitised_ref_text = sanitize_text(ref_text) if ref_text and ref_text.strip() else None
+
     _seed_rng()
-    wavs = _model.generate(
-        text=sanitize_text(text),
-        ref_audio=str(ref_audio_path),
-        **kwargs,
-    )
+
+    # Preferred path: build the VoiceClonePrompt once and reuse it.
+    # Matches what upstream's gradio demo does (omnivoice/cli/demo.py)
+    # and avoids re-running the audio tokeniser + Whisper on every call.
+    prompt = _get_or_build_clone_prompt(ref_audio_path, sanitised_ref_text)
+    if prompt is not None:
+        wavs = _model.generate(
+            text=sanitize_text(text),
+            voice_clone_prompt=prompt,
+            **kwargs,
+        )
+    else:
+        # Fallback (build failed): preserve the legacy per-call path so
+        # the request still completes — just with the historical drift
+        # characteristic.
+        if sanitised_ref_text:
+            kwargs["ref_text"] = sanitised_ref_text
+        wavs = _model.generate(
+            text=sanitize_text(text),
+            ref_audio=str(ref_audio_path),
+            **kwargs,
+        )
     return _wav_bytes(wavs[0], _sample_rate)
+
+
+def invalidate_clone_prompt(ref_audio_path: Path) -> None:
+    """Drop every cached VoiceClonePrompt entry tied to this path.
+
+    Called from VoiceIndex when a clone's ref_text is backfilled or
+    when a clone is deleted, so the next synth picks up the fresh
+    state instead of replaying the stale prompt.
+    """
+    key_prefix = str(ref_audio_path)
+    for k in list(_clone_prompt_cache.keys()):
+        if k[0] == key_prefix:
+            _clone_prompt_cache.pop(k, None)
 
 
 def synthesize_design_wav(

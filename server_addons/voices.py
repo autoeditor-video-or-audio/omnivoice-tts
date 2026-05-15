@@ -192,6 +192,12 @@ class VoiceIndex:
             if text and text.strip():
                 rec.ref_text = text.strip()
                 self._save_atomic()
+                # Drop any stale clone prompt built before the backfill,
+                # so the next synth rebuilds with the new ref_text.
+                try:
+                    inference.invalidate_clone_prompt(rec.ref_path)
+                except Exception:
+                    logger.exception("invalidate_clone_prompt failed (continuing)")
                 logger.info(
                     "backfilled ref_text into index for legacy clone %s", rec.id
                 )
@@ -301,5 +307,11 @@ class VoiceIndex:
             raise VoiceNotFoundError(voice_id)
         try:
             rec.ref_path.unlink(missing_ok=True)
+            try:
+                from server_addons import inference
+
+                inference.invalidate_clone_prompt(rec.ref_path)
+            except Exception:
+                logger.exception("invalidate_clone_prompt failed (continuing)")
         finally:
             self._save_atomic()
