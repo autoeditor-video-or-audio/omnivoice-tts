@@ -156,16 +156,50 @@ class VoiceIndex:
         return out
 
     def resolve(self, voice: str) -> tuple[str, Path, Optional[str]]:
-        """Return (kind, ref_path, ref_text_or_None)."""
+        """Return (kind, ref_path, ref_text_or_None).
+
+        For cloned voices that don't yet have a persisted `ref_text`
+        (e.g. created before the auto-transcribe-at-clone-time fix
+        landed), transparently backfill the transcript via Whisper on
+        first resolve and persist it. Subsequent calls return the
+        cached value — no per-request Whisper run, no drift.
+        """
         rec = self._clones.get(voice)
         if rec is not None:
             if not rec.ref_path.exists():
                 raise VoiceNotFoundError(f"{voice}: reference file missing")
+            if not (rec.ref_text and rec.ref_text.strip()):
+                self._backfill_ref_text(rec)
             return "cloned", rec.ref_path, rec.ref_text
         predefined = self.voices_dir / voice
         if predefined.is_file():
             return "builtin", predefined, None
         raise VoiceNotFoundError(voice)
+
+    def _backfill_ref_text(self, rec: ClonedVoiceRecord) -> None:
+        """Transcribe the reference audio once and persist the result.
+
+        Called from `resolve` on legacy clones (created before the
+        auto-transcribe-at-clone-creation fix). Failure is logged and
+        swallowed so the synth path can still proceed — upstream will
+        fall back to lazy per-request Whisper transcription, which is
+        the old behaviour.
+        """
+        try:
+            from server_addons import inference
+
+            text = inference.transcribe_reference(rec.ref_path)
+            if text and text.strip():
+                rec.ref_text = text.strip()
+                self._save_atomic()
+                logger.info(
+                    "backfilled ref_text into index for legacy clone %s", rec.id
+                )
+        except Exception:
+            logger.exception(
+                "ref_text backfill failed for %s; falling back to lazy transcribe",
+                rec.id,
+            )
 
     def add_clone(
         self,
