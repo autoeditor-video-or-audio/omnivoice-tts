@@ -1,3 +1,10 @@
+## [1.5.4](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.3...v1.5.4) (2026-05-15)
+
+
+### Bug Fixes
+
+* **inference:** default postprocess_output=False so chunked output keeps first word ([2ad7586](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/2ad75866fd8611b3000ba0c18fed4a6eee07c9ae))
+
 ## [1.5.3](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.2...v1.5.3) (2026-05-15)
 
 
