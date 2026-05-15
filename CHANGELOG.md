@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.2.0...v1.2.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **inference:** bump sanitize_text rewrite log to INFO ([d9e357e](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/d9e357edf3274813a99fcba6979170036baa62d4))
+
 # [1.2.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.1.0...v1.2.0) (2026-05-15)
 
 
