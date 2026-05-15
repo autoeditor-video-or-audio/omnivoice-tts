@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.3.0...v1.3.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **inference:** bump audio_chunk_threshold default to 120s ([faff5af](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/faff5af37a92d93e6f255c89e6f09178b84c5c7a))
+
 # [1.3.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.2.2...v1.3.0) (2026-05-15)
 
 
