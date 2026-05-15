@@ -1,3 +1,10 @@
+## [1.2.2](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.2.1...v1.2.2) (2026-05-15)
+
+
+### Bug Fixes
+
+* **sanitize:** normalise ellipsis + use period instead of … for pause ([a430cfc](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/a430cfc64b2a3c96a95e58aa0883c0b160c0756d))
+
 ## [1.2.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.2.0...v1.2.1) (2026-05-15)
 
 
