@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.1...v1.5.2) (2026-05-15)
+
+
+### Bug Fixes
+
+* **inference:** cache VoiceClonePrompt per clone + reuse instead of rebuilding per call ([9a34308](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/9a34308c1a0c61afc874fd2927fa4a6f74a407bb))
+
 ## [1.5.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.0...v1.5.1) (2026-05-15)
 
 
