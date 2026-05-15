@@ -64,17 +64,34 @@ _ANY_BRACKET_TAG = re.compile(
 )
 _PAUSE_DURATION_TAG = re.compile(r"^pause[:\s]", re.IGNORECASE)
 _MULTI_SPACE = re.compile(r"[ \t]{2,}")
+# `…` (U+2026) and triple-dot ASCII are out-of-distribution for the
+# OmniVoice tokenizer in PT-BR — they hint a long pause to humans but
+# the model treats the bytes as unknown punctuation, drifts the
+# acoustic context, and the cloned voice slips. Normalise both forms
+# to a plain period+space.
+_ELLIPSIS_FORMS = re.compile(r"…|\.\.\.+")
+# Collapse "X . Y" -> "X. Y" (left over from prosodic rewrites that
+# add a period that turned out to be redundant with surrounding punct).
+_DOUBLE_PERIOD = re.compile(r"\.\s*\.")
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;!?])")
 
 
 def _prosodic_replace(separator: str, lead: str, trail: str) -> str:
-    """Swap a tag for `separator` while keeping at most one strong punctuation."""
+    """Swap a tag for `separator` while keeping at most one strong punctuation.
+
+    `separator` is the prosodic mark we want to insert in place of the
+    bracketed tag. We use plain period+space for long pauses (instead of
+    the U+2026 ellipsis) because the tokenizer handles them in
+    distribution; ellipsis was producing unknown-token drift on PT-BR
+    cloned voices.
+    """
     keep = ""
     for ch in (lead + trail):
         if ch in ".!?":
             keep = ch
             break
-    if separator == "…":
-        return f"{keep} … " if keep else "… "
+    if separator == "PAUSE":
+        return f"{keep} . " if keep else ". "
     return f"{keep} , " if keep else ", "
 
 
@@ -96,7 +113,7 @@ def _classify_and_rewrite(match: "re.Match[str]") -> str:
 
     # 3) Pause family (no upstream equivalent) — long prosodic pause.
     if body_lc in _PAUSE_SYNONYMS or _PAUSE_DURATION_TAG.match(body_lc):
-        return _prosodic_replace("…", lead, trail)
+        return _prosodic_replace("PAUSE", lead, trail)
 
     # 4) Soft-break family (breath/inhale/etc) — short prosodic pause.
     if body_lc in _SOFT_BREAK_SYNONYMS:
@@ -115,8 +132,12 @@ def sanitize_text(text: str) -> str:
       regex matches them.
     - Common synonyms (`[laughs]`, `[annoyed sigh]`, `[chuckle]`) are
       rewritten to the canonical upstream tag.
-    - `[pause]` / `[break]` / `[silence]` / `[pause:Ns]` map to an
-      ellipsis (long prosodic pause); breath/inhale/etc. map to comma.
+    - `[pause]` / `[break]` / `[silence]` / `[pause:Ns]` map to a
+      period+space (long prosodic pause); breath/inhale/etc. map to
+      comma+space.
+    - `…` (U+2026) and `...`/`....`/etc. ASCII triple-dot are
+      normalised to `. ` for the same reason: both forms drift the
+      cloned voice on PT-BR despite parsing fine in EN/ZH.
     - Anything else inside `[...]` is dropped (logged at DEBUG).
 
     Without this rewrite the tokenizer treats unknown brackets as
@@ -124,10 +145,17 @@ def sanitize_text(text: str) -> str:
     reference-audio conditioning drifts so subsequent words come out
     in a random voice instead of the cloned one.
     """
-    if not text or "[" not in text:
+    if not text:
         return text
     original = text
-    text = _ANY_BRACKET_TAG.sub(_classify_and_rewrite, text)
+    if "[" in text:
+        text = _ANY_BRACKET_TAG.sub(_classify_and_rewrite, text)
+    text = _ELLIPSIS_FORMS.sub(". ", text)
+    # Collapse the duplicated period that arises when a [pause] sat
+    # between two punctuation marks: "X. . Y" -> "X. Y".
+    while _DOUBLE_PERIOD.search(text):
+        text = _DOUBLE_PERIOD.sub(".", text)
+    text = _SPACE_BEFORE_PUNCT.sub(r"\1", text)
     text = _MULTI_SPACE.sub(" ", text).strip()
     if text != original:
         # INFO so it shows up in default container logs without flipping
