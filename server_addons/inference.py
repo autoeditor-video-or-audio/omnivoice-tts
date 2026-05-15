@@ -170,6 +170,19 @@ OMNIVOICE_MODEL = os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
 OMNIVOICE_DTYPE = os.environ.get("OMNIVOICE_DTYPE", "float16")
 OMNIVOICE_DEVICE = os.environ.get("OMNIVOICE_DEVICE", "cuda:0")
 OMNIVOICE_NUM_STEP_DEFAULT = int(os.environ.get("OMNIVOICE_NUM_STEP", "32"))
+# Chunking knobs. Upstream defaults (audio_chunk_threshold=30.0,
+# audio_chunk_duration=15.0) trigger _generate_chunked on lines that
+# estimate just above 30s of audio — the per-chunk ref_audio re-
+# conditioning then drifts the cloned voice across chunk boundaries.
+# We default the threshold to 120s here so single-line scripts (the
+# nifty-star sequencer's case) stay on the iterative path; operators
+# can flip it back per-request via the GenerationParams body.
+OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT = float(
+    os.environ.get("OMNIVOICE_AUDIO_CHUNK_THRESHOLD", "120.0")
+)
+OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT = float(
+    os.environ.get("OMNIVOICE_AUDIO_CHUNK_DURATION", "15.0")
+)
 OMNIVOICE_SKIP_MODEL_LOAD = os.environ.get("OMNIVOICE_SKIP_MODEL_LOAD", "").lower() in (
     "1",
     "true",
@@ -279,10 +292,18 @@ def _generate_kwargs(
     # so the operator can dial inference speed without rebuilding clients.
     if "num_step" not in kwargs:
         kwargs["num_step"] = OMNIVOICE_NUM_STEP_DEFAULT
+    # Push the chunking threshold up by default so single-line synth
+    # never trips _generate_chunked (which drifts the cloned voice
+    # across chunk boundaries). Caller-supplied threshold still wins.
+    if "audio_chunk_threshold" not in kwargs:
+        kwargs["audio_chunk_threshold"] = OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT
+    if "audio_chunk_duration" not in kwargs:
+        kwargs["audio_chunk_duration"] = OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT
     if duration is not None:
         kwargs["duration"] = float(duration)
     elif speed is not None:
         kwargs["speed"] = float(speed)
+    logger.info("generate kwargs: %s", kwargs)
     return kwargs
 
 
