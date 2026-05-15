@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.0...v1.5.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **voices:** backfill ref_text on first resolve for legacy clones ([b8e793e](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/b8e793e9cad5b442b9b07d1464d81d05fe2024fe))
+
 # [1.5.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.4.0...v1.5.0) (2026-05-15)
 
 
