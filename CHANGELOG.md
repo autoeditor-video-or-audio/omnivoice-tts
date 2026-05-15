@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.1.0...v1.2.0) (2026-05-15)
+
+
+### Features
+
+* **ci:** forced rebuild to verify pipeline reaches publish stage ([d83f344](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/d83f3446331f1081599ea8e07c9bdeb189f47cf3))
+
 # [1.1.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.0.1...v1.1.0) (2026-05-14)
 
 
