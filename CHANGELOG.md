@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.3.1...v1.4.0) (2026-05-15)
+
+
+### Features
+
+* **inference,voices:** pin cloned voice across multi-line synth on PT-BR ([1cab6ad](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/1cab6ad1292c348003547a2ebfaf2b1dd4f762e6))
+
 ## [1.3.1](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.3.0...v1.3.1) (2026-05-15)
 
 
