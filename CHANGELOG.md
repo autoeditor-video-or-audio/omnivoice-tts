@@ -1,3 +1,10 @@
+## [1.5.3](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.2...v1.5.3) (2026-05-15)
+
+
+### Bug Fixes
+
+* **inference:** default audio_chunk_threshold to 5s for PT-BR clones ([e928f94](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/e928f94ad25f6aa0193b66e6affc3ff3f73d97eb))
+
 ## [1.5.2](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.1...v1.5.2) (2026-05-15)
 
 
