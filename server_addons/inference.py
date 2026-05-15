@@ -130,7 +130,11 @@ def sanitize_text(text: str) -> str:
     text = _ANY_BRACKET_TAG.sub(_classify_and_rewrite, text)
     text = _MULTI_SPACE.sub(" ", text).strip()
     if text != original:
-        logger.debug("sanitize_text rewrote markup: %r -> %r", original, text)
+        # INFO so it shows up in default container logs without flipping
+        # OMNIVOICE_LOG_LEVEL — operators need to see this when they
+        # paste a script with [pause]/[annoyed sigh] and want to confirm
+        # the rewrite ran.
+        logger.info("sanitize_text rewrote markup: %r -> %r", original, text)
     return text
 
 # Selectable knobs via env (documented in README-fork.md).
