@@ -217,12 +217,41 @@ class VoiceIndex:
         sf.write(str(target), samples, sr, subtype="PCM_16")
         tmp_path.unlink(missing_ok=True)
 
+        # Auto-transcribe at clone-creation time when the caller did
+        # not supply a ref_text. OmniVoice falls back to Whisper on
+        # every synth request otherwise; that per-request transcribe
+        # produces small variations across calls that drift the cloned
+        # voice on PT-BR (out-of-distribution for upstream's training).
+        # Doing it once here + persisting the transcript in index.json
+        # makes the conditioning bit-identical across every subsequent
+        # synth.
+        effective_ref_text = ref_text
+        if not (effective_ref_text and effective_ref_text.strip()):
+            try:
+                # Late import: voices.py is imported from server_app
+                # before the model lifespan loads, so a top-level
+                # import of inference would create a cycle.
+                from server_addons import inference
+
+                effective_ref_text = inference.transcribe_reference(target)
+                if effective_ref_text:
+                    logger.info(
+                        "auto-transcribed ref_text saved to index for clone %s",
+                        base_name,
+                    )
+            except Exception:
+                logger.exception(
+                    "auto-transcribe at clone-creation failed; "
+                    "Whisper will be invoked per-request instead"
+                )
+                effective_ref_text = None
+
         rec = ClonedVoiceRecord(
             id=base_name,
             label=name,
             language=language,
             ref_path=target,
-            ref_text=ref_text,
+            ref_text=effective_ref_text,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._clones[base_name] = rec

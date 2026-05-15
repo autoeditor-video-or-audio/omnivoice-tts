@@ -78,6 +78,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("model load failed")
         raise
+    # Pre-load Whisper alongside the main model so the first clone
+    # creation doesn't pay a ~3-5s latency spike and auto-transcribe
+    # at clone-creation time (server_addons.voices) is fast.
+    try:
+        await loop.run_in_executor(None, inference.preload_asr_model)
+    except Exception:
+        logger.exception("ASR preload failed; falling back to lazy load")
     yield
 
 

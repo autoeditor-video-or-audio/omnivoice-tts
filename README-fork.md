@@ -3,6 +3,40 @@
 OpenAI-compatible FastAPI wrapper around [`k2-fsa/OmniVoice`](https://github.com/k2-fsa/OmniVoice),
 deployed as a GPU Docker image for the nifty-star sequencer.
 
+## Fork-specific stability fixes for PT-BR cloned voices
+
+Three of the deltas this fork layers on top of upstream are aimed at
+the production case "I clone a voice in PT-BR, paste a 4-line script,
+and the cloned voice drifts on lines 3 and 4":
+
+1. **Greedy sampling by default.** Upstream's
+   `position_temperature=5.0` injects Gumbel noise inside the
+   diffusion loop, and PyTorch's global RNG advances across requests
+   — on PT-BR (out-of-distribution for upstream's EN+ZH training)
+   that drift compounds. The fork defaults
+   `OMNIVOICE_POSITION_TEMPERATURE=0.0` and pins
+   `OMNIVOICE_CLASS_TEMPERATURE=0.0` (greedy = deterministic).
+   Override via the env vars or per-request `GenerationParams` body
+   if you want stylistic variance back.
+2. **Per-request RNG reseed.** `OMNIVOICE_REQUEST_SEED=0` (default)
+   resets PyTorch's CPU + CUDA RNG at the top of every
+   `synthesize_*` call. Belt-and-braces guarantee against drift even
+   if temperature gets flipped back.
+3. **Clone-time auto-transcription.** When a clone is uploaded
+   without a `ref_text`, the fork transcribes it ONCE with Whisper
+   and persists the result in `index.json`. Every subsequent synth
+   request reuses that transcript via the existing
+   `VoiceIndex.resolve(...)` path, so OmniVoice's ICL conditioning
+   is bit-identical across all 4 lines of a list. The lifespan hook
+   pre-loads Whisper alongside the main model to keep clone creation
+   snappy.
+
+If you need stochastic generation back (e.g. running EN/ZH where the
+drift isn't a problem), set `OMNIVOICE_POSITION_TEMPERATURE=5.0` and
+`OMNIVOICE_REQUEST_SEED=-1` in your `.env`.
+
+## Upstream feature surface
+
 The upstream model ships under Apache 2.0 and supports:
 
 - 600+ languages (including Portuguese, 16,855 h of training data).

@@ -183,6 +183,27 @@ OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT = float(
 OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT = float(
     os.environ.get("OMNIVOICE_AUDIO_CHUNK_DURATION", "15.0")
 )
+
+# Sampling defaults. Upstream's `position_temperature=5.0` injects
+# Gumbel noise inside `_generate_iterative` every step; on PT-BR
+# (out-of-distribution for upstream's EN+ZH training) it amplifies
+# torch's global RNG state advancing across consecutive requests, so
+# lines 3-4 of a multi-line script drift away from the cloned voice
+# even though lines 1-2 sound right. Default both temperatures to 0.0
+# (greedy = deterministic). Callers can flip them back per-request via
+# the GenerationParams body.
+OMNIVOICE_POSITION_TEMPERATURE_DEFAULT = float(
+    os.environ.get("OMNIVOICE_POSITION_TEMPERATURE", "0.0")
+)
+OMNIVOICE_CLASS_TEMPERATURE_DEFAULT = float(
+    os.environ.get("OMNIVOICE_CLASS_TEMPERATURE", "0.0")
+)
+# Per-request RNG seed. Even with greedy sampling, future contributors
+# may flip a temperature back; reseed each call so the global RNG
+# state is identical for every request and drift cannot leak across
+# calls. Set to a negative value to disable reseeding.
+OMNIVOICE_REQUEST_SEED = int(os.environ.get("OMNIVOICE_REQUEST_SEED", "0"))
+
 OMNIVOICE_SKIP_MODEL_LOAD = os.environ.get("OMNIVOICE_SKIP_MODEL_LOAD", "").lower() in (
     "1",
     "true",
@@ -209,6 +230,60 @@ def _resolve_dtype(name: str):
 
 def is_ready() -> bool:
     return OMNIVOICE_SKIP_MODEL_LOAD or _model is not None
+
+
+def preload_asr_model() -> None:
+    """Force-load the Whisper ASR model so the first clone-creation
+    request doesn't pay a ~3-5s latency spike.
+
+    OmniVoice's `create_voice_clone_prompt` auto-transcribes the
+    reference audio when no ref_text is supplied; on the first such
+    call it lazy-loads Whisper. Pre-loading from the lifespan hook
+    keeps clone creation snappy and also lets us auto-transcribe at
+    clone-creation time (persisting ref_text in the index so future
+    synth requests skip the transcribe call entirely).
+    """
+    if _model is None:
+        logger.warning("preload_asr_model: main model not loaded yet; skipping")
+        return
+    try:
+        if getattr(_model, "_asr_pipe", None) is None:
+            logger.info("preload_asr_model: loading Whisper ASR pipeline ...")
+            _model.load_asr_model()
+            logger.info("preload_asr_model: ASR ready")
+    except Exception:
+        # Never block startup on ASR load failure — clone-creation will
+        # still work on-demand if the lazy path can recover.
+        logger.exception("preload_asr_model failed; will fall back to lazy load")
+
+
+def transcribe_reference(ref_audio_path: Path) -> Optional[str]:
+    """Run Whisper on a reference audio file and return the transcript.
+
+    Returns None on failure (caller persists None so the legacy lazy
+    transcribe path kicks in per request — old behaviour, no
+    regression).
+    """
+    if _model is None:
+        logger.warning("transcribe_reference: model not loaded; skipping")
+        return None
+    try:
+        if getattr(_model, "_asr_pipe", None) is None:
+            _model.load_asr_model()
+        import soundfile as sf
+        import torch
+
+        wav_np, sr = sf.read(str(ref_audio_path), always_2d=False)
+        if wav_np.ndim == 2:
+            wav_np = wav_np.mean(axis=1)
+        wav_tensor = torch.from_numpy(wav_np).unsqueeze(0).float()
+        text = _model.transcribe((wav_tensor, int(sr)))
+        if text and text.strip():
+            logger.info("transcribe_reference: %s -> %r", ref_audio_path.name, text.strip())
+            return text.strip()
+    except Exception:
+        logger.exception("transcribe_reference failed for %s", ref_audio_path)
+    return None
 
 
 def init_model():
@@ -299,12 +374,37 @@ def _generate_kwargs(
         kwargs["audio_chunk_threshold"] = OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT
     if "audio_chunk_duration" not in kwargs:
         kwargs["audio_chunk_duration"] = OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT
+    # Greedy sampling defaults. position_temperature=0 disables the
+    # Gumbel-noise injection in `_generate_iterative` so the global
+    # RNG state cannot drift the cloned voice across consecutive
+    # requests. class_temperature=0 is upstream's default but pin
+    # explicitly so a future upstream bump can't silently change it.
+    if "position_temperature" not in kwargs:
+        kwargs["position_temperature"] = OMNIVOICE_POSITION_TEMPERATURE_DEFAULT
+    if "class_temperature" not in kwargs:
+        kwargs["class_temperature"] = OMNIVOICE_CLASS_TEMPERATURE_DEFAULT
     if duration is not None:
         kwargs["duration"] = float(duration)
     elif speed is not None:
         kwargs["speed"] = float(speed)
     logger.info("generate kwargs: %s", kwargs)
     return kwargs
+
+
+def _seed_rng() -> None:
+    """Reset PyTorch's global RNG so each request starts from the same
+    state. Prevents drift across consecutive `model.generate` calls
+    when any sampling temperature is non-zero.
+
+    No-op if OMNIVOICE_REQUEST_SEED is negative.
+    """
+    if OMNIVOICE_REQUEST_SEED < 0:
+        return
+    import torch
+
+    torch.manual_seed(OMNIVOICE_REQUEST_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(OMNIVOICE_REQUEST_SEED)
 
 
 def synthesize_wav(
@@ -322,6 +422,7 @@ def synthesize_wav(
     kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
     if ref_text and ref_text.strip():
         kwargs["ref_text"] = sanitize_text(ref_text)
+    _seed_rng()
     wavs = _model.generate(
         text=sanitize_text(text),
         ref_audio=str(ref_audio_path),
@@ -342,6 +443,7 @@ def synthesize_design_wav(
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
     kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
+    _seed_rng()
     wavs = _model.generate(text=sanitize_text(text), instruct=instruct, **kwargs)
     return _wav_bytes(wavs[0], _sample_rate)
 
@@ -357,5 +459,6 @@ def synthesize_auto_wav(
     if _model is None:
         raise RuntimeError("OmniVoice model not initialised")
     kwargs = _generate_kwargs(speed=speed, duration=duration, **knobs)
+    _seed_rng()
     wavs = _model.generate(text=sanitize_text(text), **kwargs)
     return _wav_bytes(wavs[0], _sample_rate)
