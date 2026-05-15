@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/autoeditor-video-or-audio/omnivoice-tts
-  tag: v1.5.2-gpu
+  tag: v1.5.3-gpu
   pullPolicy: IfNotPresent
 
 service:
