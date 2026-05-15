@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.4.0...v1.5.0) (2026-05-15)
+
+
+### Features
+
+* **release:** force republish to land v1.4.0 image artifacts ([befea0b](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/befea0b915f89d351b117e1c25315a86d0c25a0d))
+
 # [1.4.0](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.3.1...v1.4.0) (2026-05-15)
 
 
