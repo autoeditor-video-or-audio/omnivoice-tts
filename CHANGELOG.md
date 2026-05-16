@@ -1,3 +1,10 @@
+## [1.5.6](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.5...v1.5.6) (2026-05-16)
+
+
+### Bug Fixes
+
+* **sanitize:** strip ASCII + typographic quotes (upstream tokenizer drops first clause) ([0a75a94](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/0a75a943111bf55389890a191b66838b32b381fe))
+
 ## [1.5.5](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.4...v1.5.5) (2026-05-16)
 
 
