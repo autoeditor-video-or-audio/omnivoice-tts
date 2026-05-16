@@ -50,6 +50,11 @@ from server_addons.inference import sanitize_text
         ("aaa [unknown_tag] bbb", "aaa bbb"),
         # Ellipsis (Unicode + ASCII triple-dot) normalised to ". ".
         ("Just dots... and ellipsis…", "Just dots. and ellipsis."),
+        # ASCII + typographic quotes stripped (else first clause is
+        # dropped from rendered PT-BR audio).
+        ('"Criou" é forte, né?', 'Criou é forte, né?'),
+        ('“Criou” é forte', 'Criou é forte'),
+        ("‘Criou’ é forte", "Criou é forte"),
         # Mixed input from the production bug report.
         (
             'Criou é forte, né? [pause] Você juntou código.',

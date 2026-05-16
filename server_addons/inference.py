@@ -74,6 +74,14 @@ _ELLIPSIS_FORMS = re.compile(r"…|\.\.\.+")
 # add a period that turned out to be redundant with surrounding punct).
 _DOUBLE_PERIOD = re.compile(r"\.\s*\.")
 _SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;!?])")
+# ASCII double quotes + the typographic curly variants. Empirical
+# PT-BR finding (REPL test on .4): a sentence that *starts* with `"`
+# (`"Criou" é forte, né?`) makes the upstream tokenizer drop the first
+# clause entirely from the rendered audio. Stripping all quote chars
+# (the prosodic information is in the surrounding punctuation, not in
+# the bracketed word) is the cheapest fix that keeps the text
+# intelligible.
+_QUOTE_CHARS = re.compile(r'["“”‘’]')
 
 
 def _prosodic_replace(separator: str, lead: str, trail: str) -> str:
@@ -138,6 +146,9 @@ def sanitize_text(text: str) -> str:
     - `…` (U+2026) and `...`/`....`/etc. ASCII triple-dot are
       normalised to `. ` for the same reason: both forms drift the
       cloned voice on PT-BR despite parsing fine in EN/ZH.
+    - ASCII `"` and typographic curly quotes (`“`, `”`, `‘`, `’`) are
+      stripped: a sentence that *starts* with `"` drops the entire
+      first clause from the rendered audio on PT-BR.
     - Anything else inside `[...]` is dropped (logged at DEBUG).
 
     Without this rewrite the tokenizer treats unknown brackets as
@@ -150,6 +161,7 @@ def sanitize_text(text: str) -> str:
     original = text
     if "[" in text:
         text = _ANY_BRACKET_TAG.sub(_classify_and_rewrite, text)
+    text = _QUOTE_CHARS.sub("", text)
     text = _ELLIPSIS_FORMS.sub(". ", text)
     # Collapse the duplicated period that arises when a [pause] sat
     # between two punctuation marks: "X. . Y" -> "X. Y".
