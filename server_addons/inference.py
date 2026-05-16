@@ -170,54 +170,43 @@ OMNIVOICE_MODEL = os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
 OMNIVOICE_DTYPE = os.environ.get("OMNIVOICE_DTYPE", "float16")
 OMNIVOICE_DEVICE = os.environ.get("OMNIVOICE_DEVICE", "cuda:0")
 OMNIVOICE_NUM_STEP_DEFAULT = int(os.environ.get("OMNIVOICE_NUM_STEP", "32"))
-# Chunking knobs. Upstream defaults (audio_chunk_threshold=30.0,
-# audio_chunk_duration=15.0) trigger _generate_chunked on lines that
-# Chunking knobs. Empirical PT-BR finding: upstream's single-shot
-# `_generate_iterative` path holds the cloned voice on the first word
-# or two but then drifts mid-sentence (PT-BR sits in the tail of
-# upstream's EN+ZH training distribution). `_generate_chunked` re-
-# conditions the reference audio at every chunk boundary, anchoring
-# the clone for the whole utterance. Default to a low threshold
-# (5.0s) + short chunks (3.0s) so PT-BR clones stay stable; operators
-# running EN/ZH can raise the threshold per-request via the
-# GenerationParams body (or via OMNIVOICE_AUDIO_CHUNK_THRESHOLD).
-OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT = float(
-    os.environ.get("OMNIVOICE_AUDIO_CHUNK_THRESHOLD", "5.0")
-)
-OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT = float(
-    os.environ.get("OMNIVOICE_AUDIO_CHUNK_DURATION", "3.0")
-)
 
-# `postprocess_output=True` (upstream default) runs `remove_silence`
-# with lead_sil=100ms / mid_sil=500ms / trail_sil=100ms. On chunked
-# PT-BR output the leading silence trim sometimes eats the first
-# word's onset (the diffusion path produces a soft attack that
-# remove_silence classifies as silence). Default to False here;
-# operators can re-enable per-request via the GenerationParams body
-# if a particular voice's chunks need silence cleanup.
-OMNIVOICE_POSTPROCESS_OUTPUT_DEFAULT = os.environ.get(
-    "OMNIVOICE_POSTPROCESS_OUTPUT", "false"
+# Generation defaults: aligned with what upstream's gradio demo
+# (`omnivoice/cli/demo.py:187`) actually passes — that combination
+# (num_step=32, guidance_scale=2.0, denoise=True, preprocess_prompt=True,
+# postprocess_output=True, plus the upstream library defaults for
+# everything we don't override) is the one isolated REPL tests on
+# `Adam-Padra.wav` confirmed reproduces the upstream demo's audio
+# quality on PT-BR clones: cloned voice stays consistent across
+# repeated calls AND the first word of the input is preserved.
+#
+# Earlier defaults that overrode those values (low chunking, greedy
+# sampling, postprocess_output=False, per-request torch.manual_seed)
+# were reasoned chases that each introduced their own regression.
+# Stick with the demo's combo unless someone *measures* a better one.
+#
+# Operators can still tune any of these per-request via the
+# GenerationParams body or by overriding the matching OMNIVOICE_*
+# env var. None of these defaults inject the knob when the caller
+# already set it.
+OMNIVOICE_GUIDANCE_SCALE_DEFAULT = float(
+    os.environ.get("OMNIVOICE_GUIDANCE_SCALE", "2.0")
+)
+OMNIVOICE_DENOISE_DEFAULT = os.environ.get("OMNIVOICE_DENOISE", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+OMNIVOICE_PREPROCESS_PROMPT_DEFAULT = os.environ.get(
+    "OMNIVOICE_PREPROCESS_PROMPT", "true"
 ).lower() in ("1", "true", "yes")
-
-# Sampling defaults. Upstream's `position_temperature=5.0` injects
-# Gumbel noise inside `_generate_iterative` every step; on PT-BR
-# (out-of-distribution for upstream's EN+ZH training) it amplifies
-# torch's global RNG state advancing across consecutive requests, so
-# lines 3-4 of a multi-line script drift away from the cloned voice
-# even though lines 1-2 sound right. Default both temperatures to 0.0
-# (greedy = deterministic). Callers can flip them back per-request via
-# the GenerationParams body.
-OMNIVOICE_POSITION_TEMPERATURE_DEFAULT = float(
-    os.environ.get("OMNIVOICE_POSITION_TEMPERATURE", "0.0")
-)
-OMNIVOICE_CLASS_TEMPERATURE_DEFAULT = float(
-    os.environ.get("OMNIVOICE_CLASS_TEMPERATURE", "0.0")
-)
-# Per-request RNG seed. Even with greedy sampling, future contributors
-# may flip a temperature back; reseed each call so the global RNG
-# state is identical for every request and drift cannot leak across
-# calls. Set to a negative value to disable reseeding.
-OMNIVOICE_REQUEST_SEED = int(os.environ.get("OMNIVOICE_REQUEST_SEED", "0"))
+OMNIVOICE_POSTPROCESS_OUTPUT_DEFAULT = os.environ.get(
+    "OMNIVOICE_POSTPROCESS_OUTPUT", "true"
+).lower() in ("1", "true", "yes")
+# Chunking + sampling: leave at upstream library defaults
+# (audio_chunk_threshold=30.0, audio_chunk_duration=15.0,
+# position_temperature=5.0, class_temperature=0.0). We DO NOT
+# inject overrides for these in _generate_kwargs anymore.
 
 OMNIVOICE_SKIP_MODEL_LOAD = os.environ.get("OMNIVOICE_SKIP_MODEL_LOAD", "").lower() in (
     "1",
@@ -378,29 +367,21 @@ def _generate_kwargs(
         value = knobs.get(name)
         if value is not None:
             kwargs[name] = value
-    # Default num_step to the env override when the caller did not set it,
-    # so the operator can dial inference speed without rebuilding clients.
+    # Inject the same combo upstream's gradio demo passes
+    # (`omnivoice/cli/demo.py:187-192`): num_step, guidance_scale,
+    # denoise, preprocess_prompt, postprocess_output. Chunking +
+    # sampling are intentionally NOT overridden — they stay at the
+    # upstream library defaults (audio_chunk_threshold=30.0,
+    # audio_chunk_duration=15.0, position_temperature=5.0,
+    # class_temperature=0.0).
     if "num_step" not in kwargs:
         kwargs["num_step"] = OMNIVOICE_NUM_STEP_DEFAULT
-    # Push the chunking threshold up by default so single-line synth
-    # never trips _generate_chunked (which drifts the cloned voice
-    # across chunk boundaries). Caller-supplied threshold still wins.
-    if "audio_chunk_threshold" not in kwargs:
-        kwargs["audio_chunk_threshold"] = OMNIVOICE_AUDIO_CHUNK_THRESHOLD_DEFAULT
-    if "audio_chunk_duration" not in kwargs:
-        kwargs["audio_chunk_duration"] = OMNIVOICE_AUDIO_CHUNK_DURATION_DEFAULT
-    # Greedy sampling defaults. position_temperature=0 disables the
-    # Gumbel-noise injection in `_generate_iterative` so the global
-    # RNG state cannot drift the cloned voice across consecutive
-    # requests. class_temperature=0 is upstream's default but pin
-    # explicitly so a future upstream bump can't silently change it.
-    if "position_temperature" not in kwargs:
-        kwargs["position_temperature"] = OMNIVOICE_POSITION_TEMPERATURE_DEFAULT
-    if "class_temperature" not in kwargs:
-        kwargs["class_temperature"] = OMNIVOICE_CLASS_TEMPERATURE_DEFAULT
-    # Default postprocess_output to False so the leading-silence trim
-    # in upstream's remove_silence() does not eat the first word's
-    # soft attack on chunked PT-BR output.
+    if "guidance_scale" not in kwargs:
+        kwargs["guidance_scale"] = OMNIVOICE_GUIDANCE_SCALE_DEFAULT
+    if "denoise" not in kwargs:
+        kwargs["denoise"] = OMNIVOICE_DENOISE_DEFAULT
+    if "preprocess_prompt" not in kwargs:
+        kwargs["preprocess_prompt"] = OMNIVOICE_PREPROCESS_PROMPT_DEFAULT
     if "postprocess_output" not in kwargs:
         kwargs["postprocess_output"] = OMNIVOICE_POSTPROCESS_OUTPUT_DEFAULT
     if duration is not None:
@@ -412,19 +393,14 @@ def _generate_kwargs(
 
 
 def _seed_rng() -> None:
-    """Reset PyTorch's global RNG so each request starts from the same
-    state. Prevents drift across consecutive `model.generate` calls
-    when any sampling temperature is non-zero.
+    """No-op shim kept to avoid breaking callers.
 
-    No-op if OMNIVOICE_REQUEST_SEED is negative.
+    Earlier iteration reset PyTorch's RNG per-request to mask
+    sampling drift; that turned out to be a chase. With upstream
+    defaults restored (position_temperature=5.0, the demo combo)
+    the RNG advance is no longer the dominant factor.
     """
-    if OMNIVOICE_REQUEST_SEED < 0:
-        return
-    import torch
-
-    torch.manual_seed(OMNIVOICE_REQUEST_SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(OMNIVOICE_REQUEST_SEED)
+    return
 
 
 # Per-process cache of pre-built VoiceClonePrompt objects, keyed by

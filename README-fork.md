@@ -5,56 +5,35 @@ deployed as a GPU Docker image for the nifty-star sequencer.
 
 ## Fork-specific stability fixes for PT-BR cloned voices
 
-Five layers stack on top of upstream to keep a PT-BR cloned voice
-stable across a multi-line sequencer playlist. Empirical finding from
-isolated REPL tests on `Adam-Padra.wav`: upstream's single-shot
-`_generate_iterative` path holds the cloned voice for the first word
-or two and then drifts mid-sentence on PT-BR (out-of-distribution
-for upstream's EN+ZH training corpus). The fixes below stack so the
-final synth path matches what stays on-voice end-to-end.
+Two layers stack on top of upstream. The default generation config
+matches what upstream's gradio demo passes
+(`omnivoice/cli/demo.py:187`) — isolated REPL tests on PT-BR clones
+confirmed that combo is what reproduces the demo's audio quality
+(cloned voice stays consistent across repeated calls + the first
+word of the input is preserved).
 
-1. **Low chunking threshold (5s) + short chunks (3s).** This is the
-   load-bearing fix. `_generate_chunked` re-conditions the reference
-   audio tokens at every chunk boundary, anchoring the clone for the
-   full utterance. Without chunking, PT-BR clones drift even with
-   deterministic sampling. Override via
-   `OMNIVOICE_AUDIO_CHUNK_THRESHOLD` / `OMNIVOICE_AUDIO_CHUNK_DURATION`
-   or per-request `GenerationParams`.
-
-1.5. **`postprocess_output=False` default.** Upstream's
-   `remove_silence` runs with `lead_sil=100ms` and on chunked PT-BR
-   it sometimes eats the first word's soft attack. Disabled by
-   default; flip on via `OMNIVOICE_POSTPROCESS_OUTPUT=true` if you
-   want the silence trim back.
-2. **Pre-built `VoiceClonePrompt` cache.** Matches upstream's gradio
-   demo (`omnivoice/cli/demo.py:209`): build the prompt once via
+1. **Pre-built `VoiceClonePrompt` cache.** Matches upstream's gradio
+   demo: build the prompt once via
    `model.create_voice_clone_prompt(...)` and reuse for every synth.
    Eliminates per-request audio-tokeniser encode + Whisper transcribe
    noise.
-3. **Greedy sampling by default.** Upstream's
-   `position_temperature=5.0` injects Gumbel noise inside the
-   diffusion loop, and PyTorch's global RNG advances across requests
-   — on PT-BR that drift compounds. The fork defaults
-   `OMNIVOICE_POSITION_TEMPERATURE=0.0` and pins
-   `OMNIVOICE_CLASS_TEMPERATURE=0.0` (greedy = deterministic).
-4. **Per-request RNG reseed.** `OMNIVOICE_REQUEST_SEED=0` (default)
-   resets PyTorch's CPU + CUDA RNG at the top of every
-   `synthesize_*` call. Belt-and-braces against drift if temperature
-   gets flipped back.
-5. **Clone-time auto-transcription + lazy backfill.** When a clone is
+2. **Clone-time auto-transcription + lazy backfill.** When a clone is
    uploaded without a `ref_text`, the fork transcribes it ONCE with
    Whisper and persists the result in `index.json`. Legacy clones
    created before this fix get their transcript backfilled on first
    resolve. Whisper is pre-loaded from the lifespan hook so clone
    creation never pays the ASR load tax.
 
-If you're running EN or ZH (upstream's trained languages) and want
-to skip the chunking overhead, set
-`OMNIVOICE_AUDIO_CHUNK_THRESHOLD=30.0`
-`OMNIVOICE_AUDIO_CHUNK_DURATION=15.0` (upstream defaults) in your
-`.env`. For stochastic generation, also raise
-`OMNIVOICE_POSITION_TEMPERATURE=5.0` and set
-`OMNIVOICE_REQUEST_SEED=-1`.
+History — earlier iterations of the fork overrode chunking
+(`audio_chunk_threshold=5.0`), sampling
+(`position_temperature=0.0`), and post-processing
+(`postprocess_output=False`) trying to chase a cloned-voice drift.
+Each override fixed one symptom and broke another: low chunking
+dropped the first word; greedy sampling didn't anchor the voice on
+its own; disabling postprocess kept onset but didn't help drift.
+The demo combo (everything at the upstream defaults the Gradio UI
+uses) is the actual fix. All those env knobs still exist for tuning
+but default to the demo combo now.
 
 ## Upstream feature surface
 
