@@ -5,7 +5,7 @@ deployed as a GPU Docker image for the nifty-star sequencer.
 
 ## Fork-specific stability fixes for PT-BR cloned voices
 
-Two layers stack on top of upstream. The default generation config
+Three layers stack on top of upstream. The default generation config
 matches what upstream's gradio demo passes
 (`omnivoice/cli/demo.py:187`) — isolated REPL tests on PT-BR clones
 confirmed that combo is what reproduces the demo's audio quality
@@ -23,6 +23,15 @@ word of the input is preserved).
    created before this fix get their transcript backfilled on first
    resolve. Whisper is pre-loaded from the lifespan hook so clone
    creation never pays the ASR load tax.
+3. **`sanitize_text` rewrites + quote stripping.** `[pause]` /
+   `[break]` / `[silence]` map to `. `; `[annoyed sigh]` / `[laughs]`
+   / etc. map to upstream-recognised tags (`[sigh]` / `[laughter]`);
+   `…` and `...`/`....` normalise to `. `. ASCII `"` and typographic
+   curly quotes (`“`, `”`, `‘`, `’`) are stripped — a sentence that
+   *starts* with `"` made the upstream tokenizer drop the entire
+   first clause from the rendered audio on PT-BR. The prosodic
+   information (`forte, né?`) is unchanged; only the bracketing
+   chars go.
 
 History — earlier iterations of the fork overrode chunking
 (`audio_chunk_threshold=5.0`), sampling
@@ -97,6 +106,132 @@ curl -X POST http://localhost:8007/v1/audio/auto \
     -d '{"model":"omnivoice","input":"[laughter] Você é demais!","language":"Portuguese"}' \
     --output /tmp/ov-laugh.wav
 ```
+
+## Local development on WSL (Windows) — iterate without remote rebuilds
+
+The published GHCR image cycles through CI on every commit and that
+loop is too slow when you're iterating on `server_addons/` or chasing
+a generation-quality bug. On a Windows host with WSL2 + Docker
+Desktop + an NVIDIA GPU you can bind-mount the repo into the
+container and reload the server in seconds.
+
+### Prerequisites
+
+- Windows 10/11 with WSL2 enabled.
+- Ubuntu 22.04 (or newer) WSL distro.
+- [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop)
+  with **WSL2 backend** enabled in *Settings → General*.
+- NVIDIA GPU + recent driver + **WSL2 GPU passthrough** enabled
+  (Docker Desktop *Settings → Resources → WSL Integration* + the
+  `nvidia-container-toolkit` Docker Desktop ships).
+- Verify GPU is visible:
+  ```bash
+  wsl
+  nvidia-smi   # should list your GPU
+  docker run --rm --gpus all nvcr.io/nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
+  ```
+
+### Clone + first boot
+
+Inside WSL (e.g. `/mnt/wsl/projects/`):
+
+```bash
+cd ~/works/services
+git clone https://github.com/autoeditor-video-or-audio/omnivoice-tts.git
+cd omnivoice-tts
+
+# .env defaults are fine for local dev; flip OMNIVOICE_PORT if 8007
+# is already taken.
+cp .env.example .env
+
+# Pull the latest published image so the first boot is fast (model
+# weights + flash-attn wheel are already inside). After this you can
+# bind-mount the repo and your code edits override the baked
+# server_addons/.
+docker compose --env-file .env -f docker-compose.gpu.prod.yml pull
+```
+
+### Bind-mount the repo for live edits
+
+Add a local override (`docker-compose.dev.yml`) so your repo's
+`server_addons/` shadows the one baked into the image. Don't commit
+this file — it's local-only.
+
+```yaml
+# docker-compose.dev.yml
+services:
+  omnivoice-tts:
+    container_name: omnivoice-tts-server
+    volumes:
+      - ./server_addons:/app/server_addons:ro
+      - omnivoice-hf-cache:/root/.cache/huggingface
+      - omnivoice-data:/app/data
+      - omnivoice-voices:/app/voices
+      - omnivoice-ref-audio:/app/reference_audio
+volumes:
+  omnivoice-hf-cache:
+  omnivoice-data:
+  omnivoice-voices:
+  omnivoice-ref-audio:
+```
+
+Run with both files (the second overrides the first):
+
+```bash
+docker compose \
+  --env-file .env \
+  -f docker-compose.gpu.prod.yml \
+  -f docker-compose.dev.yml \
+  up -d
+```
+
+### Iterate
+
+After editing `server_addons/inference.py` (or any other file under
+`server_addons/`), restart the container — the bind mount picked up
+your changes already, you just need uvicorn to re-import:
+
+```bash
+docker compose restart omnivoice-tts
+docker logs --tail 50 omnivoice-tts-server
+```
+
+For Python-side experiments that don't need uvicorn (e.g. trying a
+new generation-config combo on a cloned voice), drop into the
+container and run a one-shot REPL — way faster than pushing + waiting
+for CI:
+
+```bash
+docker exec omnivoice-tts-server python3 - <<'PY'
+from omnivoice import OmniVoice, OmniVoiceGenerationConfig
+import torch, soundfile as sf
+m = OmniVoice.from_pretrained('k2-fsa/OmniVoice', device_map='cuda:0', dtype=torch.float16)
+m.load_asr_model()
+prompt = m.create_voice_clone_prompt(ref_audio='/app/reference_audio/Adam-Padra.wav')
+cfg = OmniVoiceGenerationConfig(num_step=32, guidance_scale=2.0, denoise=True,
+                                preprocess_prompt=True, postprocess_output=True)
+a = m.generate(text='Oi pessoal, tudo bem?', voice_clone_prompt=prompt, generation_config=cfg)
+sf.write('/tmp/repl.wav', a[0], 24000); print('wrote /tmp/repl.wav', a[0].shape)
+PY
+docker cp omnivoice-tts-server:/tmp/repl.wav .
+# Open repl.wav in a Windows player (Explorer auto-mounts \\wsl$\Ubuntu\…).
+```
+
+### When you're done iterating
+
+- `docker compose -f docker-compose.gpu.prod.yml -f docker-compose.dev.yml down`
+- Commit your changes; push triggers the CI matrix that publishes
+  `:vX.Y.Z-gpu` / `:vX.Y.Z-gpu-flash` to GHCR for the rest of the
+  team. **No manual `gh workflow run` — the push event already
+  triggers CI on this repo.**
+
+### Persisting clones across `docker compose down`
+
+`omnivoice-voices` / `omnivoice-ref-audio` / `omnivoice-data` are
+named volumes (separate from the bind-mounted code), so a `down`
+keeps your reference audio + `index.json` between restarts. Add or
+remove them in `docker-compose.dev.yml` if you prefer host paths
+(e.g. `./data:/app/data`) for easier inspection.
 
 ## Image flavours
 
