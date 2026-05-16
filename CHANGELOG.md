@@ -1,3 +1,10 @@
+## [1.5.5](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.4...v1.5.5) (2026-05-16)
+
+
+### Bug Fixes
+
+* **inference:** align defaults to upstream gradio demo combo ([58f11e5](https://github.com/autoeditor-video-or-audio/omnivoice-tts/commit/58f11e5d4a9b97b717993499ff8b7f6f76436aa7))
+
 ## [1.5.4](https://github.com/autoeditor-video-or-audio/omnivoice-tts/compare/v1.5.3...v1.5.4) (2026-05-15)
 
 
